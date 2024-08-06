@@ -1,5 +1,44 @@
 # @gitbook/cli
 
+## 0.17.0
+
+### Minor Changes
+
+-   d3fcacc: Remove entities from CLI
+
+### Patch Changes
+
+-   Updated dependencies [d3fcacc]
+    -   @gitbook/api@0.57.0
+
+## 0.16.0
+
+### Minor Changes
+
+-   6646aac: Update the CLI to accommodate new category
+
+## 0.15.2
+
+### Patch Changes
+
+-   65c7dc7: Bumping API and CLI package to use latest specs
+-   Updated dependencies [65c7dc7]
+    -   @gitbook/api@0.44.0
+
+## 0.15.1
+
+### Patch Changes
+
+-   7d76dfb: Update integrations to use latest runtime and api client with `User-Agent`
+-   Updated dependencies [46c9686]
+    -   @gitbook/api@0.27.0
+
+## 0.15.0
+
+### Minor Changes
+
+-   2dfce83: Bump CLI to use the latest OpenAPI spec
+
 ## 0.14.0
 
 ### Minor Changes

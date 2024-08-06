@@ -1,4 +1,4 @@
-import createHttpError from 'http-errors';
+import { StatusError, error } from 'itty-router';
 import { Router } from 'itty-router';
 
 import { ContentKitIcon, ContentKitSelectOption, GitSyncOperationState } from '@gitbook/api';
@@ -8,12 +8,15 @@ import { fetchProject, fetchProjectBranches, fetchProjects, searchUserProjects }
 import { configBlock } from './components';
 import { uninstallWebhook } from './provider';
 import { triggerExport, updateCommitWithPreviewLinks } from './sync';
-import type { GitLabRuntimeContext, GitLabSpaceConfiguration } from './types';
+import { handleIntegrationTask } from './tasks';
+import type { GitLabRuntimeContext, GitLabSpaceConfiguration, IntegrationTask } from './types';
 import {
     getSpaceConfigOrThrow,
     assertIsDefined,
     verifySignature,
     BRANCH_REF_PREFIX,
+    arrayToHex,
+    safeCompare,
 } from './utils';
 import { handleMergeRequestEvent, handlePushEvent } from './webhooks';
 
@@ -28,6 +31,61 @@ const handleFetchEvent: FetchEventCallback<GitLabRuntimeContext> = async (reques
                 environment.installation?.urls.publicEndpoint ||
                 environment.integration.urls.publicEndpoint
         ).pathname,
+    });
+
+    async function verifyIntegrationSignature(
+        payload: string,
+        signature: string,
+        secret: string
+    ): Promise<boolean> {
+        if (!signature) {
+            return false;
+        }
+
+        const algorithm = { name: 'HMAC', hash: 'SHA-256' };
+        const enc = new TextEncoder();
+        const key = await crypto.subtle.importKey('raw', enc.encode(secret), algorithm, false, [
+            'sign',
+            'verify',
+        ]);
+        const signed = await crypto.subtle.sign(algorithm.name, key, enc.encode(payload));
+        const expectedSignature = arrayToHex(signed);
+
+        return safeCompare(expectedSignature, signature);
+    }
+
+    /**
+     * Handle integration tasks
+     */
+    router.post('/tasks', async (request) => {
+        const signature = request.headers.get('x-gitbook-integration-signature') ?? '';
+        const payloadString = await request.text();
+
+        const verified = await verifyIntegrationSignature(
+            payloadString,
+            signature,
+            environment.signingSecrets.integration
+        );
+
+        if (!verified) {
+            const message = `Invalid signature for integration task`;
+            logger.error(message);
+            throw new StatusError(400, message);
+        }
+
+        const { task } = JSON.parse(payloadString) as { task: IntegrationTask };
+        logger.debug('verified & received integration task', task);
+
+        context.waitUntil(
+            (async () => {
+                await handleIntegrationTask(context, task);
+            })()
+        );
+
+        return new Response(JSON.stringify({ acknowledged: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        });
     });
 
     /**
@@ -47,16 +105,16 @@ const handleFetchEvent: FetchEventCallback<GitLabRuntimeContext> = async (reques
                 const valid = await verifySignature(
                     environment.integration.name,
                     signature,
-                    environment.signingSecret!
+                    environment.signingSecrets.integration
                 );
                 if (!valid) {
-                    throw createHttpError(400, 'Invalid signature for webhook event');
+                    const message = `Invalid signature for webhook event ${eventUuid}`;
+                    logger.error(message);
+                    throw new StatusError(400, message);
                 }
             } catch (error: any) {
-                return new Response(JSON.stringify({ error: error.message }), {
-                    status: 400,
-                    headers: { 'content-type': 'application/json' },
-                });
+                logger.error(`Error verifying signature ${error}`);
+                throw new StatusError(400, error.message);
             }
         }
 
@@ -220,15 +278,10 @@ const handleFetchEvent: FetchEventCallback<GitLabRuntimeContext> = async (reques
         });
     });
 
-    let response;
-    try {
-        response = await router.handle(request, context);
-    } catch (error: any) {
-        logger.error('error handling request', error);
-        return new Response(error.message, {
-            status: error.status || 500,
-        });
-    }
+    const response = (await router.handle(request, context).catch((err) => {
+        logger.error(`error handling request ${err.message} ${err.stack}`);
+        return error(err);
+    })) as Response | undefined;
 
     if (!response) {
         return new Response(`No route matching ${request.method} ${request.url}`, {
@@ -246,6 +299,10 @@ const handleSpaceContentUpdated: EventCallback<
     'space_content_updated',
     GitLabRuntimeContext
 > = async (event, context) => {
+    logger.info(
+        `Handling space_content_updated event for space ${event.spaceId} revision ${event.revisionId}`
+    );
+
     const { data: revision } = await context.api.spaces.getRevisionById(
         event.spaceId,
         event.revisionId
@@ -260,11 +317,18 @@ const handleSpaceContentUpdated: EventCallback<
 
     const spaceInstallation = context.environment.spaceInstallation;
     if (!spaceInstallation) {
-        logger.debug(`missing space installation, skipping`);
+        logger.debug(`missing space installation for ${event.spaceId}, skipping`);
         return;
     }
 
-    await triggerExport(context, spaceInstallation);
+    if (!spaceInstallation.configuration.configuredAt) {
+        logger.debug(`space ${event.spaceId} is not configured, skipping`);
+        return;
+    }
+
+    await triggerExport(context, spaceInstallation, {
+        eventTimestamp: new Date(revision.createdAt),
+    });
 };
 
 /*
@@ -331,6 +395,11 @@ const handleSpaceInstallationDeleted: EventCallback<
     const configuration = event.previous.configuration as GitLabSpaceConfiguration | undefined;
     if (!configuration) {
         logger.debug(`missing space installation configuration, skipping`);
+        return;
+    }
+
+    if (!configuration.webhookId) {
+        logger.debug(`missing webhook id in configuration, skipping`);
         return;
     }
 

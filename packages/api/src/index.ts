@@ -1,3 +1,6 @@
+// @ts-ignore - Ignore the error "'rootDir' is expected to contain all source files" because
+// we need to control root to avoid ./dist/src and only have ./dist
+import { name, version } from '../package.json';
 import { Api } from './client';
 import { GitBookAPIError } from './GitBookAPIError';
 
@@ -17,7 +20,20 @@ interface GitBookAPIErrorResponse {
 export class GitBookAPI extends Api<{
     authToken?: string;
 }> {
-    private endpoint: string;
+    /**
+     * Endpoint used by the API client.
+     */
+    public readonly endpoint: string;
+
+    /**
+     * Authentication token used by the API client.
+     */
+    public readonly authToken: string | undefined;
+
+    /**
+     * User agent used by the API client.
+     */
+    public readonly userAgent: string;
 
     constructor(
         options: {
@@ -28,12 +44,22 @@ export class GitBookAPI extends Api<{
             endpoint?: string;
 
             /**
+             * User agent to use.
+             * It'll default to the package name and version.
+             */
+            userAgent?: string;
+
+            /**
              * Authentication token to use.
              */
             authToken?: string;
         } = {}
     ) {
-        const { endpoint = GITBOOK_DEFAULT_ENDPOINT, authToken } = options;
+        const {
+            endpoint = GITBOOK_DEFAULT_ENDPOINT,
+            authToken,
+            userAgent = `${name}/${version}`,
+        } = options;
 
         super({
             baseUrl: `${endpoint}/v1`,
@@ -42,6 +68,7 @@ export class GitBookAPI extends Api<{
                     return {
                         headers: {
                             Authorization: `Bearer ${securityData.authToken}`,
+                            'User-Agent': userAgent,
                         },
                     };
                 }
@@ -80,6 +107,8 @@ export class GitBookAPI extends Api<{
         });
 
         this.endpoint = endpoint;
+        this.userAgent = userAgent;
+        this.authToken = authToken;
         this.setSecurityData({ authToken });
     }
 
@@ -98,6 +127,7 @@ export class GitBookAPI extends Api<{
 
         return new GitBookAPI({
             endpoint: this.endpoint,
+            userAgent: this.userAgent,
             authToken: installationToken.token,
         });
     }

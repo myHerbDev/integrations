@@ -7,7 +7,7 @@ mkdir ./spec
 LOCAL_OPENAPI_FILE=../../../gitbook-x/packages/api-client/static/openapi.yaml
 
 if [[ -z "${GITBOOK_OPENAPI_URL}" ]]; then
-  OPENAPI_URL="https://api.gitbook.com/openapi.yaml"
+  OPENAPI_URL="https://api.gitbook.com/openapi.yaml?cacheBust=$(date +%s)"
 else
   OPENAPI_URL="${GITBOOK_OPENAPI_URL}"
 fi
@@ -36,4 +36,4 @@ esbuild ./src/index.ts --bundle --platform=node --format=esm --outfile=./dist/in
 
 # Finally we build the TypeScript declaration files
 echo "Generating public types from code..."
-tsc --project tsconfig.json --declaration --allowJs --emitDeclarationOnly --outDir ./dist/
+tsc --project tsconfig.json --declaration --allowJs --emitDeclarationOnly --outDir ./dist/ --rootDir ./src
