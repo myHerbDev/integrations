@@ -11,7 +11,7 @@
         "@gitbook/cli": "*",
         "@gitbook/eslint-config": "*",
         "@gitbook/tsconfig": "*",
-        "esbuild": "^0.15.7"
+        "esbuild": "^0.27.3"
     },
     "scripts": {
         "build": "node -r esbuild-register ./webframe/scripts/build.ts",
